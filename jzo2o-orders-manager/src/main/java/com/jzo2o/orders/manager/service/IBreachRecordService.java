@@ -9,8 +9,7 @@ import com.jzo2o.orders.base.model.domain.BreachRecord;
  * 违约记录 服务类
  * </p>
  *
- * @author itcast
- * @since 2023-08-02
+ * @author yutsung chen
  */
 public interface IBreachRecordService extends IService<BreachRecord> {
 

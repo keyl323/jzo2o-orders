@@ -17,8 +17,7 @@ import java.util.List;
  * 服务服务单 服务类
  * </p>
  *
- * @author itcast
- * @since 2023-07-26
+ * @author yutsung chen
  */
 public interface IOrdersServeManagerService extends IService<OrdersServe> {
 

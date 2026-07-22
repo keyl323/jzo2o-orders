@@ -8,7 +8,7 @@ import lombok.Data;
 import java.util.Date;
 
 /**
- * @author itcast
+ * @author yutsung chen
  */
 @Data
 @ApiModel("服务单分页查询相关模型")

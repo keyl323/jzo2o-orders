@@ -15,8 +15,7 @@ import java.util.List;
  * 订单退款表 服务实现类
  * </p>
  *
- * @author itcast
- * @since 2023-09-07
+ * @author yutsung chen
  */
 @Service
 public class OrdersRefundServiceImpl extends ServiceImpl<OrdersRefundMapper, OrdersRefund> implements IOrdersRefundService {

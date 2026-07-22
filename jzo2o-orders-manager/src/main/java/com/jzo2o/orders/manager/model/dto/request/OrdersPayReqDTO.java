@@ -10,8 +10,7 @@ import javax.validation.constraints.NotNull;
 /**
  * 订单支付请求体
  *
- * @author itcast
- * @create 2023/9/4 10:00
+ * @author yutsung chen
  **/
 @Data
 @ApiModel("订单支付请求体")

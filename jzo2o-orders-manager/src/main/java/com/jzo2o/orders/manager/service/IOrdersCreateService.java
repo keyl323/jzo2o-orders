@@ -1,5 +1,6 @@
 package com.jzo2o.orders.manager.service;
 
+import cn.hutool.db.sql.Order;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.IService;
 import com.jzo2o.api.market.dto.request.CouponUseBackReqDTO;
@@ -24,10 +25,22 @@ import java.util.List;
  * 下单服务类
  * </p>
  *
- * @author itcast
- * @since 2023-07-10
+ * @author yutsung chen
  */
 public interface IOrdersCreateService extends IService<Orders> {
 
 
+    /**
+     * 下单接口
+     *
+     * @param placeOrderReqDTO
+     * @return
+     */
+    PlaceOrderResDTO placeOrder(PlaceOrderReqDTO placeOrderReqDTO);
+
+    /**
+     * 生成订单
+     * @param orders
+     */
+    void add(Orders orders);
 }

@@ -8,8 +8,7 @@ import lombok.Data;
 /**
  * 根据服务人员/机构分页查询服务数据
  *
- * @author itcast
- * @create 2023/9/15 18:55
+ * @author yutsung chen
  **/
 @Data
 @ApiModel("根据服务人员/机构分页查询服务单相关模型")
