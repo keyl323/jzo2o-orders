@@ -63,4 +63,27 @@ public class ConsumerOrdersController {
     public PlaceOrderResDTO place(@RequestBody PlaceOrderReqDTO placeOrderReqDTO){
         return ordersCreateService.placeOrder(placeOrderReqDTO);
     }
+
+    @PutMapping("/pay/{id}")
+    @ApiOperation("订单支付")
+    public OrdersPayResDTO pay(@PathVariable("id") Long id,@RequestBody OrdersPayReqDTO ordersPayReqDTO){
+        return ordersCreateService.pay(id,ordersPayReqDTO);
+    }
+
+    @GetMapping("/pay/{id}/result")
+    @ApiOperation("查询订单支付结果")
+    public OrdersPayResDTO payResult(@PathVariable("id") Long id){
+        return ordersCreateService.getPayResultFromTradeServer(id);
+    }
+
+    @PutMapping("/cancel")
+    @ApiOperation("取消订单")
+    public void cancel(@RequestBody OrderCancelReqDTO orderCancelReqDTO){
+        OrderCancelDTO orderCancelDTO = BeanUtil.toBean(orderCancelReqDTO,OrderCancelDTO.class);
+        CurrentUserInfo currentUserInfo = UserContext.currentUser();
+        orderCancelDTO.setUserId(currentUserInfo.getId());
+        orderCancelDTO.setCurrentUserName(currentUserInfo.getName());
+        orderCancelDTO.setCurrentUserType(currentUserInfo.getUserType());
+        ordersManagerService.cancel(orderCancelDTO);
+    }
 }
