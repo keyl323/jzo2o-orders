@@ -23,11 +23,14 @@ import com.jzo2o.common.utils.DateUtils;
 import com.jzo2o.common.utils.NumberUtils;
 import com.jzo2o.common.utils.ObjectUtils;
 import com.jzo2o.mvc.utils.UserContext;
+import com.jzo2o.orders.base.config.OrderStateMachine;
 import com.jzo2o.orders.base.constants.RedisConstants;
 import com.jzo2o.orders.base.enums.OrderPayStatusEnum;
+import com.jzo2o.orders.base.enums.OrderStatusChangeEventEnum;
 import com.jzo2o.orders.base.enums.OrderStatusEnum;
 import com.jzo2o.orders.base.mapper.OrdersMapper;
 import com.jzo2o.orders.base.model.domain.Orders;
+import com.jzo2o.orders.base.model.dto.OrderSnapshotDTO;
 import com.jzo2o.orders.manager.model.dto.request.OrdersPayReqDTO;
 import com.jzo2o.orders.manager.model.dto.request.PlaceOrderReqDTO;
 import com.jzo2o.orders.manager.model.dto.response.OrdersPayResDTO;
@@ -81,6 +84,8 @@ public class OrdersCreateServiceImpl extends ServiceImpl<OrdersMapper, Orders> i
     private TradeProperties tradeProperties;
     @Resource
     private TradingApi tradingApi;
+    @Resource
+    private OrderStateMachine orderStateMachine;
 
     /**
      * 生成订单id
@@ -184,6 +189,9 @@ public class OrdersCreateServiceImpl extends ServiceImpl<OrdersMapper, Orders> i
         if (!save) {
             throw new DbRuntimeException("下单失败");
         }
+        //调用状态机的启动方法
+        OrderSnapshotDTO orderSnapshotDTO = BeanUtils.toBean(orders, OrderSnapshotDTO.class);
+        orderStateMachine.start(null, orders.getId().toString(), orderSnapshotDTO);
     }
 
     /**
@@ -269,18 +277,26 @@ public class OrdersCreateServiceImpl extends ServiceImpl<OrdersMapper, Orders> i
         }
 
         //将订单状态改为派单中和支付成功
-        boolean update = lambdaUpdate().eq(Orders::getId, orders.getId())
-                .set(Orders::getPayTime, LocalDateTime.now())
-                .set(Orders::getTradingOrderNo, tradeStatusMsg.getTradingOrderNo())
-                .set(Orders::getTradingChannel, tradeStatusMsg.getTradingChannel())
-                .set(Orders::getTransactionId, tradeStatusMsg.getTransactionId())
-                .set(Orders::getPayStatus, OrderPayStatusEnum.PAY_SUCCESS.getStatus())
-                .set(Orders::getOrdersStatus, OrderStatusEnum.DISPATCHING.getStatus())
-                .update();
-        if (!update){
-            log.info("更新订单:{}支付成功失败",orders.getId());
-            throw new CommonException("更新订单"+orders.getId()+"支付成功失败");
-        }
+//        boolean update = lambdaUpdate().eq(Orders::getId, orders.getId())
+//                .set(Orders::getPayTime, LocalDateTime.now())
+//                .set(Orders::getTradingOrderNo, tradeStatusMsg.getTradingOrderNo())
+//                .set(Orders::getTradingChannel, tradeStatusMsg.getTradingChannel())
+//                .set(Orders::getTransactionId, tradeStatusMsg.getTransactionId())
+//                .set(Orders::getPayStatus, OrderPayStatusEnum.PAY_SUCCESS.getStatus())
+//                .set(Orders::getOrdersStatus, OrderStatusEnum.DISPATCHING.getStatus())
+//                .update();
+//        if (!update){
+//            log.info("更新订单:{}支付成功失败",orders.getId());
+//            throw new CommonException("更新订单"+orders.getId()+"支付成功失败");
+//        }
+        //使用状态机将支付状态改为派单中
+        OrderSnapshotDTO orderSnapshotDTO = new OrderSnapshotDTO();
+        orderSnapshotDTO.setTradingOrderNo(tradeStatusMsg.getTradingOrderNo());
+        orderSnapshotDTO.setTradingChannel(tradeStatusMsg.getTradingChannel());
+        orderSnapshotDTO.setPayTime(LocalDateTime.now());//支付成功
+        orderSnapshotDTO.setThirdOrderId(tradeStatusMsg.getTransactionId());
+        orderStateMachine.changeStatus(null,tradeStatusMsg.getProductOrderNo().toString(), OrderStatusChangeEventEnum.PAYED, orderSnapshotDTO);
+
     }
 
     /**

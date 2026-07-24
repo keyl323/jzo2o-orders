@@ -16,9 +16,12 @@ import com.jzo2o.common.enums.EnableStatusEnum;
 import com.jzo2o.common.expcetions.CommonException;
 import com.jzo2o.common.utils.BeanUtils;
 import com.jzo2o.common.utils.ObjectUtils;
+import com.jzo2o.orders.base.config.OrderStateMachine;
 import com.jzo2o.orders.base.enums.OrderPayStatusEnum;
 import com.jzo2o.orders.base.enums.OrderRefundStatusEnum;
+import com.jzo2o.orders.base.enums.OrderStatusChangeEventEnum;
 import com.jzo2o.orders.base.enums.OrderStatusEnum;
+import com.jzo2o.orders.base.handler.OrderCancelHandler;
 import com.jzo2o.orders.base.mapper.OrdersMapper;
 import com.jzo2o.orders.base.model.domain.Orders;
 import com.jzo2o.orders.base.model.domain.OrdersCanceled;
@@ -35,6 +38,7 @@ import com.jzo2o.orders.manager.service.IOrdersCreateService;
 import com.jzo2o.orders.manager.service.IOrdersManagerService;
 import com.jzo2o.orders.manager.service.IOrdersRefundService;
 import lombok.extern.slf4j.Slf4j;
+import org.aspectj.weaver.ast.Or;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -70,6 +74,8 @@ public class OrdersManagerServiceImpl extends ServiceImpl<OrdersMapper, Orders> 
     private IOrdersRefundService ordersRefundService;
     @Resource
     private OrdersHandler ordersHandler;
+    @Resource
+    private OrderStateMachine orderStateMachine;
 
     @Override
     public List<Orders> batchQuery(List<Long> ids) {
@@ -205,17 +211,23 @@ public class OrdersManagerServiceImpl extends ServiceImpl<OrdersMapper, Orders> 
         ordersCanceled.setCancelTime(LocalDateTime.now());
         ordersCanceledService.save(ordersCanceled);
         //将订单状态更新为已关闭
-        OrderUpdateStatusDTO updateStatusDTO = OrderUpdateStatusDTO.builder()
-                .id(orderCancelDTO.getId())
-                .originStatus(OrderStatusEnum.DISPATCHING.getStatus())
-                .targetStatus(OrderStatusEnum.CLOSED.getStatus())
-                .refundStatus(OrderRefundStatusEnum.REFUNDING.getStatus())
+//        OrderUpdateStatusDTO updateStatusDTO = OrderUpdateStatusDTO.builder()
+//                .id(orderCancelDTO.getId())
+//                .originStatus(OrderStatusEnum.DISPATCHING.getStatus())
+//                .targetStatus(OrderStatusEnum.CLOSED.getStatus())
+//                .refundStatus(OrderRefundStatusEnum.REFUNDING.getStatus())
+//                .build();
+//
+//        Integer result = ordersCommonService.updateStatus(updateStatusDTO);
+//        if (result <= 0){
+//            throw new DbRuntimeException("订单取消失败");
+//        }
+        OrderSnapshotDTO orderSnapshotDTO = OrderSnapshotDTO.builder()
+                .cancellerId(orderCancelDTO.getCurrentUserId())
+                .cancelTime(LocalDateTime.now())
+                .cancelReason(orderCancelDTO.getCancelReason())
                 .build();
-
-        Integer result = ordersCommonService.updateStatus(updateStatusDTO);
-        if (result <= 0){
-            throw new DbRuntimeException("订单取消失败");
-        }
+        orderStateMachine.changeStatus(null, orderCancelDTO.getId().toString(), OrderStatusChangeEventEnum.CLOSE_DISPATCHING_ORDER, orderSnapshotDTO);
 
         //保存退款记录
         OrdersRefund ordersRefund = new OrdersRefund();
@@ -236,16 +248,25 @@ public class OrdersManagerServiceImpl extends ServiceImpl<OrdersMapper, Orders> 
         ordersCanceled.setCancelTime(LocalDateTime.now());
         ordersCanceledService.save(ordersCanceled);
         //将订单状态更新为取消订单
-        OrderUpdateStatusDTO updateStatusDTO = OrderUpdateStatusDTO.builder()
-                .id(orderCancelDTO.getId())
-                .originStatus(OrderStatusEnum.NO_PAY.getStatus())
-                .targetStatus(OrderStatusEnum.CANCELED.getStatus())
+        //调用状态机的方法
+        /*        //更新订单状态为关闭订单
+        OrderUpdateStatusDTO orderUpdateStatusDTO = OrderUpdateStatusDTO.builder().id(orderCancelDTO.getId())
+                .originStatus(OrderStatusEnum.DISPATCHING.getStatus())
+                .targetStatus(OrderStatusEnum.CLOSED.getStatus())
+                .refundStatus(OrderRefundStatusEnum.REFUNDING.getStatus())//退款状态为退款中
                 .build();
+        int result = ordersCommonService.updateStatus(orderUpdateStatusDTO);
+        if (result <= 0) {
+            throw new DbRuntimeException("待服务订单关闭事件处理失败");
+        }*/
+        //使用状态机处理订单取消
+        OrderSnapshotDTO orderSnapshotDTO = OrderSnapshotDTO.builder()
+                .cancellerId(orderCancelDTO.getCurrentUserId())
+                .cancelTime(LocalDateTime.now())
+                .cancelReason(orderCancelDTO.getCancelReason())
+                .build();
+        orderStateMachine.changeStatus(null, orderCancelDTO.getId().toString(), OrderStatusChangeEventEnum.CANCEL, orderSnapshotDTO);
 
-        Integer result = ordersCommonService.updateStatus(updateStatusDTO);
-        if (result <= 0){
-            throw new DbRuntimeException("订单取消失败");
-        }
     }
 
 }
