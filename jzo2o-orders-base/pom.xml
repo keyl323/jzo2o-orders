@@ -29,10 +29,10 @@
             <groupId>com.jzo2o</groupId>
             <artifactId>jzo2o-redis</artifactId>
         </dependency>
-<!--        <dependency>-->
-<!--            <groupId>com.jzo2o</groupId>-->
-<!--            <artifactId>jzo2o-shardingsphere-jdbc</artifactId>-->
-<!--        </dependency>-->
+        <dependency>
+            <groupId>com.jzo2o</groupId>
+            <artifactId>jzo2o-shardingsphere-jdbc</artifactId>
+        </dependency>
 <!--        <dependency>-->
 <!--            <groupId>com.jzo2o</groupId>-->
 <!--            <artifactId>jzo2o-api</artifactId>-->

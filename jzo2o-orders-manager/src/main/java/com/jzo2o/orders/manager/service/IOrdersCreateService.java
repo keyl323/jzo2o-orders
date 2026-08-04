@@ -1,6 +1,7 @@
 package com.jzo2o.orders.manager.service;
 
 import com.baomidou.mybatisplus.extension.service.IService;
+import com.jzo2o.api.market.dto.response.AvailableCouponsResDTO;
 import com.jzo2o.api.orders.dto.request.OrderCancelReqDTO;
 import com.jzo2o.common.model.msg.TradeStatusMsg;
 import com.jzo2o.orders.base.model.domain.Orders;
@@ -65,4 +66,11 @@ public interface IOrdersCreateService extends IService<Orders> {
      */
     List<Orders> queryOverTimePayOrdersListByCount(Integer count);
 
+    /**
+     * 获取可用优惠券
+     * @param serveId
+     * @param purNum
+     * @return
+     */
+    List<AvailableCouponsResDTO> getAvailableCoupons(Long serveId, Integer purNum);
 }

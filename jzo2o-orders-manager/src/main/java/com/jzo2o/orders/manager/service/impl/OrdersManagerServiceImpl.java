@@ -1,6 +1,7 @@
 package com.jzo2o.orders.manager.service.impl;
 
 import cn.hutool.core.bean.BeanUtil;
+import cn.hutool.core.collection.CollUtil;
 import cn.hutool.db.DbRuntimeException;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -15,6 +16,8 @@ import com.jzo2o.common.constants.UserType;
 import com.jzo2o.common.enums.EnableStatusEnum;
 import com.jzo2o.common.expcetions.CommonException;
 import com.jzo2o.common.utils.BeanUtils;
+import com.jzo2o.common.utils.CollUtils;
+import com.jzo2o.common.utils.JsonUtils;
 import com.jzo2o.common.utils.ObjectUtils;
 import com.jzo2o.orders.base.config.OrderStateMachine;
 import com.jzo2o.orders.base.enums.OrderPayStatusEnum;
@@ -37,6 +40,7 @@ import com.jzo2o.orders.manager.service.IOrdersCanceledService;
 import com.jzo2o.orders.manager.service.IOrdersCreateService;
 import com.jzo2o.orders.manager.service.IOrdersManagerService;
 import com.jzo2o.orders.manager.service.IOrdersRefundService;
+import com.jzo2o.redis.helper.CacheHelper;
 import lombok.extern.slf4j.Slf4j;
 import org.aspectj.weaver.ast.Or;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
@@ -46,8 +50,11 @@ import org.springframework.transaction.annotation.Transactional;
 import javax.annotation.Resource;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 import static com.jzo2o.orders.base.constants.FieldConstants.SORT_BY;
+import static com.jzo2o.orders.base.constants.RedisConstants.RedisKey.ORDERS;
 
 /**
  * <p>
@@ -76,10 +83,12 @@ public class OrdersManagerServiceImpl extends ServiceImpl<OrdersMapper, Orders> 
     private OrdersHandler ordersHandler;
     @Resource
     private OrderStateMachine orderStateMachine;
+    @Resource
+    private CacheHelper cacheHelper;
 
     @Override
     public List<Orders> batchQuery(List<Long> ids) {
-        LambdaQueryWrapper<Orders> queryWrapper = Wrappers.<Orders>lambdaQuery().in(Orders::getId, ids).ge(Orders::getUserId, 0);
+        LambdaQueryWrapper<Orders> queryWrapper = Wrappers.<Orders>lambdaQuery().in(Orders::getId, ids);
         return baseMapper.selectList(queryWrapper);
     }
 
@@ -103,18 +112,58 @@ public class OrdersManagerServiceImpl extends ServiceImpl<OrdersMapper, Orders> 
                 .eq(ObjectUtils.isNotNull(ordersStatus), Orders::getOrdersStatus, ordersStatus)
                 .lt(ObjectUtils.isNotNull(sortBy), Orders::getSortBy, sortBy)
                 .eq(Orders::getUserId, currentUserId)
-                .eq(Orders::getDisplay, EnableStatusEnum.ENABLE.getStatus());
+                .eq(Orders::getDisplay, EnableStatusEnum.ENABLE.getStatus())
+                .select(Orders::getId);//指定查询的字段是订单id
         Page<Orders> queryPage = new Page<>();
         queryPage.addOrder(OrderItem.desc(SORT_BY));
         queryPage.setSearchCount(false);
 
-        //2.查询订单列表
+        //2.查询订单列表 使用覆盖索引
         Page<Orders> ordersPage = baseMapper.selectPage(queryPage, queryWrapper);
-        List<Orders> records = ordersPage.getRecords();
-        List<OrderSimpleResDTO> orderSimpleResDTOS = BeanUtil.copyToList(records, OrderSimpleResDTO.class);
+        //将查询出的列表提取出订单id
+        List<Orders> orderList = ordersPage.getRecords();
+        List<Long> ids = CollUtils.getFieldValues(orderList, Orders::getId);
+        //根据订单id查询
+        //List<Orders> ordersList = batchQuery(ids);
+        String redisKey = String.format(ORDERS, currentUserId);
+        //将订单信息存入缓存 如果有缓存直接查缓存
+        List<OrderSimpleResDTO> orderSimpleResDTOS = cacheHelper.<Long, OrderSimpleResDTO>batchGet(redisKey, ids, (noCacheIds, clazz) -> {
+            List<Orders> ordersList = batchQuery(noCacheIds);
+            Map<Long, OrderSimpleResDTO> collect = ordersList.stream().collect(Collectors.toMap(Orders::getId, o -> BeanUtils.toBean(o, OrderSimpleResDTO.class)));
+            return collect;
+        }, OrderSimpleResDTO.class, 600L);
+        //List<OrderSimpleResDTO> orderSimpleResDTOS = BeanUtil.copyToList(ordersList, OrderSimpleResDTO.class);
         return orderSimpleResDTOS;
 
     }
+
+//    /**
+//     * 滚动分页查询
+//     *
+//     * @param currentUserId 当前用户id
+//     * @param ordersStatus  订单状态，0：待支付，100：派单中，200：待服务，300：服务中，400：待评价，500：订单完成，600：已取消，700：已关闭
+//     * @param sortBy        排序字段
+//     * @return 订单列表
+//     */
+//    @Override
+//    public List<OrderSimpleResDTO> consumerQueryList(Long currentUserId, Integer ordersStatus, Long sortBy) {
+//        //1.构件查询条件
+//        LambdaQueryWrapper<Orders> queryWrapper = Wrappers.<Orders>lambdaQuery()
+//                .eq(ObjectUtils.isNotNull(ordersStatus), Orders::getOrdersStatus, ordersStatus)
+//                .lt(ObjectUtils.isNotNull(sortBy), Orders::getSortBy, sortBy)
+//                .eq(Orders::getUserId, currentUserId)
+//                .eq(Orders::getDisplay, EnableStatusEnum.ENABLE.getStatus())
+//        Page<Orders> queryPage = new Page<>();
+//        queryPage.addOrder(OrderItem.desc(SORT_BY));
+//        queryPage.setSearchCount(false);
+//
+//        //2.查询订单列表
+//        Page<Orders> ordersPage = baseMapper.selectPage(queryPage, queryWrapper);
+//        List<Orders> records = ordersPage.getRecords();
+//        List<OrderSimpleResDTO> orderSimpleResDTOS = BeanUtil.copyToList(records, OrderSimpleResDTO.class);
+//        return orderSimpleResDTOS;
+//
+//    }
     /**
      * 根据订单id查询
      *
@@ -123,34 +172,65 @@ public class OrdersManagerServiceImpl extends ServiceImpl<OrdersMapper, Orders> 
      */
     @Override
     public OrderResDTO getDetail(Long id) {
-        Orders orders = queryById(id);
-        orders = cancelIfPayOverTime(orders);
-        OrderResDTO orderResDTO = BeanUtil.toBean(orders, OrderResDTO.class);
+//        Orders orders = queryById(id);
+        //查询订单快照
+        String currentSnapshotCache = orderStateMachine.getCurrentSnapshotCache(id.toString());
+        //将json转成对象
+        OrderSnapshotDTO orderSnapshotDTO = JsonUtils.toBean(currentSnapshotCache, OrderSnapshotDTO.class);
+        orderSnapshotDTO = cancelIfPayOverTime(orderSnapshotDTO);
+        OrderResDTO orderResDTO = BeanUtil.toBean(orderSnapshotDTO, OrderResDTO.class);
         return orderResDTO;
     }
 
     /**
      * 超过时间取消订单
-     * @param orders
+     * @param orderSnapshotDTO
      * @return
      */
-    public Orders cancelIfPayOverTime(Orders orders) {
+    public OrderSnapshotDTO cancelIfPayOverTime(OrderSnapshotDTO orderSnapshotDTO) {
+        Integer orderStatus = orderSnapshotDTO.getOrdersStatus();
         //创建订单未支付15分钟后自动取消
-        if (orders.getOrdersStatus()==OrderStatusEnum.NO_PAY.getStatus()
-                && orders.getCreateTime().isBefore(LocalDateTime.now().minusMinutes(15))){
+        if (orderStatus ==OrderStatusEnum.NO_PAY.getStatus()
+                && orderSnapshotDTO.getCreateTime().isBefore(LocalDateTime.now().minusMinutes(15))){
             //查询支付结果 如果支付状态仍然是未支付进行取消订单
-            OrdersPayResDTO ordersPayResDTO = ordersCreateService.getPayResultFromTradeServer(orders.getId());
+            OrdersPayResDTO ordersPayResDTO = ordersCreateService.getPayResultFromTradeServer(orderSnapshotDTO.getId());
             int payResultFromTradServer = ordersPayResDTO.getPayStatus();
             if (payResultFromTradServer != OrderPayStatusEnum.PAY_SUCCESS.getStatus()){
-                OrderCancelDTO orderCancelDTO = BeanUtils.toBean(orders, OrderCancelDTO.class);
+                OrderCancelDTO orderCancelDTO = BeanUtils.toBean(orderSnapshotDTO, OrderCancelDTO.class);
                 orderCancelDTO.setCurrentUserType(UserType.SYSTEM);
                 orderCancelDTO.setCancelReason("订单超时支付,自动取消");
-                cancel(orderCancelDTO);
-                orders = getById(orders.getId());
+                cancelByNoPay(orderCancelDTO);
+
+                String currentSnapshot = orderStateMachine.getCurrentSnapshotCache(orderSnapshotDTO.getId().toString());
+                orderSnapshotDTO = JsonUtils.toBean(currentSnapshot, OrderSnapshotDTO.class);
+                return orderSnapshotDTO;
             }
         }
-        return orders;
+        return orderSnapshotDTO;
     }
+
+//    /**
+//     * 超过时间取消订单
+//     * @param orders
+//     * @return
+//     */
+//    public Orders cancelIfPayOverTime(Orders orders) {
+//        //创建订单未支付15分钟后自动取消
+//        if (orders.getOrdersStatus()==OrderStatusEnum.NO_PAY.getStatus()
+//                && orders.getCreateTime().isBefore(LocalDateTime.now().minusMinutes(15))){
+//            //查询支付结果 如果支付状态仍然是未支付进行取消订单
+//            OrdersPayResDTO ordersPayResDTO = ordersCreateService.getPayResultFromTradeServer(orders.getId());
+//            int payResultFromTradServer = ordersPayResDTO.getPayStatus();
+//            if (payResultFromTradServer != OrderPayStatusEnum.PAY_SUCCESS.getStatus()){
+//                OrderCancelDTO orderCancelDTO = BeanUtils.toBean(orders, OrderCancelDTO.class);
+//                orderCancelDTO.setCurrentUserType(UserType.SYSTEM);
+//                orderCancelDTO.setCancelReason("订单超时支付,自动取消");
+//                cancel(orderCancelDTO);
+//                orders = getById(orders.getId());
+//            }
+//        }
+//        return orders;
+//    }
 
     /**
      * 订单评价
@@ -227,7 +307,7 @@ public class OrdersManagerServiceImpl extends ServiceImpl<OrdersMapper, Orders> 
                 .cancelTime(LocalDateTime.now())
                 .cancelReason(orderCancelDTO.getCancelReason())
                 .build();
-        orderStateMachine.changeStatus(null, orderCancelDTO.getId().toString(), OrderStatusChangeEventEnum.CLOSE_DISPATCHING_ORDER, orderSnapshotDTO);
+        orderStateMachine.changeStatus(orderCancelDTO.getUserId(), orderCancelDTO.getId().toString(), OrderStatusChangeEventEnum.CLOSE_DISPATCHING_ORDER, orderSnapshotDTO);
 
         //保存退款记录
         OrdersRefund ordersRefund = new OrdersRefund();
@@ -265,7 +345,7 @@ public class OrdersManagerServiceImpl extends ServiceImpl<OrdersMapper, Orders> 
                 .cancelTime(LocalDateTime.now())
                 .cancelReason(orderCancelDTO.getCancelReason())
                 .build();
-        orderStateMachine.changeStatus(null, orderCancelDTO.getId().toString(), OrderStatusChangeEventEnum.CANCEL, orderSnapshotDTO);
+        orderStateMachine.changeStatus(orderCancelDTO.getUserId(), orderCancelDTO.getId().toString(), OrderStatusChangeEventEnum.CANCEL, orderSnapshotDTO);
 
     }
 
