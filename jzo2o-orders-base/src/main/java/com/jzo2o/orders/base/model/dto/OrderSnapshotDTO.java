@@ -1,7 +1,7 @@
 package com.jzo2o.orders.base.model.dto;
 
-//import com.jzo2o.statemachine.core.StateMachineSnapshot;
 import com.jzo2o.statemachine.core.StateMachineSnapshot;
+import io.swagger.annotations.ApiModelProperty;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;

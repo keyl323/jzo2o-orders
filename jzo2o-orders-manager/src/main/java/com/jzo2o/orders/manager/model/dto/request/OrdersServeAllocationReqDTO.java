@@ -6,7 +6,7 @@ import lombok.Data;
 import javax.validation.constraints.NotNull;
 
 /**
- * @author yutsung chen
+ * @author itcast
  */
 @Data
 public class OrdersServeAllocationReqDTO {

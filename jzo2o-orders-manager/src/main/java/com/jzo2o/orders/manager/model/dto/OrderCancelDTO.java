@@ -11,7 +11,8 @@ import java.time.LocalDateTime;
 /**
  * 订单取消模型
  *
- * @author yutsung chen
+ * @author itcast
+ * @create 2023/8/7 17:12
  **/
 @Data
 @Builder
@@ -67,4 +68,9 @@ public class OrderCancelDTO {
      * 支付服务交易单号
      */
     private Long tradingOrderNo;
+
+    /**
+     * 实际服务完成时间
+     */
+    private LocalDateTime realServeEndTime;
 }

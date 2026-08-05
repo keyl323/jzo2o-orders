@@ -8,7 +8,7 @@ import java.math.BigDecimal;
 import java.time.LocalDateTime;
 
 /**
- * @author yutsung chen
+ * @author itcast
  */
 @Data
 @ApiModel("派单列表")

@@ -13,7 +13,8 @@ import org.springframework.stereotype.Service;
  * 违约记录 服务实现类
  * </p>
  *
- * @author yutsung chen
+ * @author itcast
+ * @since 2023-08-02
  */
 @Service
 public class BreachRecordServiceImpl extends ServiceImpl<BreachRecordMapper, BreachRecord> implements IBreachRecordService {
