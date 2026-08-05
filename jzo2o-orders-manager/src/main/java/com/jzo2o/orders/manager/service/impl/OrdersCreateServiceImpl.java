@@ -45,6 +45,7 @@ import com.jzo2o.orders.manager.service.client.CustomerClient;
 import com.jzo2o.orders.manager.service.client.MarketClient;
 import com.rabbitmq.client.Return;
 import io.lettuce.core.dynamic.CommandCreationException;
+import io.seata.spring.annotation.GlobalTransactional;
 import lombok.extern.slf4j.Slf4j;
 import org.aspectj.apache.bcel.generic.ObjectType;
 import org.elasticsearch.action.admin.indices.delete.TransportDeleteIndexAction;
@@ -198,7 +199,8 @@ public class OrdersCreateServiceImpl extends ServiceImpl<OrdersMapper, Orders> i
      * @param orders
      * @param couponId
      */
-    @Transactional(rollbackFor = Exception.class)
+    //@Transactional(rollbackFor = Exception.class)
+    @GlobalTransactional
     public void addWithCoupon(Orders orders, Long couponId) {
         CouponUseReqDTO couponUseReqDTO = new CouponUseReqDTO();
         //订单id

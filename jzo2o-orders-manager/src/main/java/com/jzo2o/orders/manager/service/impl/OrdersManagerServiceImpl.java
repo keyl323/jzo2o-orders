@@ -2,6 +2,7 @@ package com.jzo2o.orders.manager.service.impl;
 
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.collection.CollUtil;
+import cn.hutool.core.util.ObjectUtil;
 import cn.hutool.db.DbRuntimeException;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
@@ -9,6 +10,8 @@ import com.baomidou.mybatisplus.core.metadata.OrderItem;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.baomidou.mybatisplus.extension.service.impl.ServiceImpl;
+import com.jzo2o.api.market.CouponApi;
+import com.jzo2o.api.market.dto.request.CouponUseBackReqDTO;
 import com.jzo2o.api.orders.dto.response.OrderResDTO;
 import com.jzo2o.api.orders.dto.response.OrderSimpleResDTO;
 import com.jzo2o.api.trade.enums.PayChannelEnum;
@@ -41,6 +44,7 @@ import com.jzo2o.orders.manager.service.IOrdersCreateService;
 import com.jzo2o.orders.manager.service.IOrdersManagerService;
 import com.jzo2o.orders.manager.service.IOrdersRefundService;
 import com.jzo2o.redis.helper.CacheHelper;
+import io.seata.spring.annotation.GlobalTransactional;
 import lombok.extern.slf4j.Slf4j;
 import org.aspectj.weaver.ast.Or;
 import org.springframework.amqp.rabbit.annotation.RabbitListener;
@@ -85,6 +89,8 @@ public class OrdersManagerServiceImpl extends ServiceImpl<OrdersMapper, Orders> 
     private OrderStateMachine orderStateMachine;
     @Resource
     private CacheHelper cacheHelper;
+    @Resource
+    private CouponApi couponApi;
 
     @Override
     public List<Orders> batchQuery(List<Long> ids) {
@@ -164,6 +170,7 @@ public class OrdersManagerServiceImpl extends ServiceImpl<OrdersMapper, Orders> 
 //        return orderSimpleResDTOS;
 //
 //    }
+
     /**
      * 根据订单id查询
      *
@@ -184,18 +191,19 @@ public class OrdersManagerServiceImpl extends ServiceImpl<OrdersMapper, Orders> 
 
     /**
      * 超过时间取消订单
+     *
      * @param orderSnapshotDTO
      * @return
      */
     public OrderSnapshotDTO cancelIfPayOverTime(OrderSnapshotDTO orderSnapshotDTO) {
         Integer orderStatus = orderSnapshotDTO.getOrdersStatus();
         //创建订单未支付15分钟后自动取消
-        if (orderStatus ==OrderStatusEnum.NO_PAY.getStatus()
-                && orderSnapshotDTO.getCreateTime().isBefore(LocalDateTime.now().minusMinutes(15))){
+        if (orderStatus == OrderStatusEnum.NO_PAY.getStatus()
+                && orderSnapshotDTO.getCreateTime().isBefore(LocalDateTime.now().minusMinutes(15))) {
             //查询支付结果 如果支付状态仍然是未支付进行取消订单
             OrdersPayResDTO ordersPayResDTO = ordersCreateService.getPayResultFromTradeServer(orderSnapshotDTO.getId());
             int payResultFromTradServer = ordersPayResDTO.getPayStatus();
-            if (payResultFromTradServer != OrderPayStatusEnum.PAY_SUCCESS.getStatus()){
+            if (payResultFromTradServer != OrderPayStatusEnum.PAY_SUCCESS.getStatus()) {
                 OrderCancelDTO orderCancelDTO = BeanUtils.toBean(orderSnapshotDTO, OrderCancelDTO.class);
                 orderCancelDTO.setCurrentUserType(UserType.SYSTEM);
                 orderCancelDTO.setCancelReason("订单超时支付,自动取消");
@@ -254,31 +262,69 @@ public class OrdersManagerServiceImpl extends ServiceImpl<OrdersMapper, Orders> 
 
     /**
      * 订单取消
+     *
      * @param orderCancelDTO
      */
     @Override
     public void cancel(OrderCancelDTO orderCancelDTO) {
-        //判断订单是否为空
+        //查询订单信息
         Orders orders = getById(orderCancelDTO.getId());
-        if (ObjectUtils.isNull(orders)) {
-            throw new CommonException("要取消的订单不存在");
+        BeanUtils.copyProperties(orders, orderCancelDTO);
+        if (ObjectUtil.isNull(orders)) {
+            throw new DbRuntimeException("找不到要取消的订单,订单号：{}", orderCancelDTO.getId());
         }
-        orderCancelDTO.setTradingOrderNo(orders.getTradingOrderNo());
-        orderCancelDTO.setRealPayAmount(orders.getRealPayAmount());
         //订单状态
         Integer ordersStatus = orders.getOrdersStatus();
-        if (OrderStatusEnum.NO_PAY.getStatus() == ordersStatus) {
-            //当前是未支付
-            owner.cancelByNoPay(orderCancelDTO);
-        }else if(OrderStatusEnum.DISPATCHING.getStatus() == ordersStatus){
-            //订单状态是已支付(待服务)
-            owner.cancelByDispatching(orderCancelDTO);
-            ordersHandler.requestRefundNewThread(orderCancelDTO.getId());
-        }else {
-            throw new CommonException("当前订单状态不允许取消");
-        }
 
+        if (ObjectUtils.equals(OrderStatusEnum.NO_PAY.getStatus(), ordersStatus)) { //订单状态为待支付
+            if (orders.getDiscountAmount() != null) {
+                owner.cancelByNoPayWithCoupon(orderCancelDTO);
+            } else {
+                owner.cancelByNoPay(orderCancelDTO);
+            }
+
+        } else if (ObjectUtils.equals(OrderStatusEnum.DISPATCHING.getStatus(), ordersStatus)) { //订单状态为待服务
+            if (orders.getDiscountAmount() != null) {
+                owner.cancelByDispatchingWithCoupon(orderCancelDTO);
+            } else {
+                owner.cancelByDispatching(orderCancelDTO);
+            }
+            //新启动一个线程请求退款
+            ordersHandler.requestRefundNewThread(orders.getId());
+        } else {
+            throw new CommonException("当前订单状态不支持取消");
+        }
     }
+
+    /**
+     * 派单中状态取消订单（有优惠券）
+     *
+     * @param orderCancelDTO
+     */
+    @GlobalTransactional
+    public void cancelByDispatchingWithCoupon(OrderCancelDTO orderCancelDTO) {
+        CouponUseBackReqDTO couponUseBackReqDTO = new CouponUseBackReqDTO();
+        couponUseBackReqDTO.setOrdersId(orderCancelDTO.getId());
+        couponUseBackReqDTO.setUserId(orderCancelDTO.getUserId());
+        couponApi.useBack(couponUseBackReqDTO);
+        cancelByDispatching(orderCancelDTO);
+    }
+
+
+    /**
+     * 未支付状态取消订单（有优惠券）
+     *
+     * @param orderCancelDTO
+     */
+    @GlobalTransactional
+    public void cancelByNoPayWithCoupon(OrderCancelDTO orderCancelDTO) {
+        CouponUseBackReqDTO couponUseBackReqDTO = new CouponUseBackReqDTO();
+        couponUseBackReqDTO.setOrdersId(orderCancelDTO.getId());
+        couponUseBackReqDTO.setUserId(orderCancelDTO.getUserId());
+        couponApi.useBack(couponUseBackReqDTO);
+        cancelByNoPay(orderCancelDTO);
+    }
+
 
     //派单中状态取消订单
     @Transactional(rollbackFor = Exception.class)
